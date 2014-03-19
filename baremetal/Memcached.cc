@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ebbrt/Debug.h>
 #include <ebbrt/Messenger.h>
+#include <ebbrt/Trace.h>
 #include "Memcached.h"
 
 ebbrt::Memcached::Memcached() : set_count_(0), get_count_(0), other_count_(0) {}
@@ -149,6 +150,7 @@ void ebbrt::Memcached::Quit(NetworkManager::TcpPcb *pcb,
     res->response.opcode = PROTOCOL_BINARY_CMD_QUIT;
     pcb->Send(std::make_shared<const Buffer>(std::move(buf)));
   }
+
 }
 
 void ebbrt::Memcached::Nop(protocol_binary_request_header &h) {
@@ -182,6 +184,10 @@ void ebbrt::Memcached::StartListening(uint16_t port) {
       } else {
         kprintf("TCP Connection closed\n");
         delete p;
+#ifdef __EBBRT_ENABLE_TRACE__
+        ebbrt::trace::Disable();
+        ebbrt::trace::Dump();
+#endif
       }
     });
     // TCP connection opened

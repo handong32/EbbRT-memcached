@@ -1,3 +1,3 @@
-EBBRT_OPTFLAGS := -O4 -DNDEBUG -flto
+EBBRT_OPTFLAGS := -O4 -DNDEBUG 
 
 include ../build.mk

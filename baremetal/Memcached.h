@@ -25,14 +25,14 @@ private:
   int other_count_;
   uint16_t port_;
   NetworkManager::TcpPcb tcp_;
-  std::unordered_map<std::string, std::shared_ptr<Buffer> > map_;
+  std::unordered_map<std::string, std::unique_ptr<IOBuf>> map_;
   static const char *com2str(uint8_t);
 
   void Preexecute(NetworkManager::TcpPcb *, protocol_binary_request_header &,
-                  Buffer);
+                  std::unique_ptr<IOBuf>);
   void Unimplemented(protocol_binary_request_header &);
-  void Set(NetworkManager::TcpPcb *, protocol_binary_request_header &, Buffer);
-  void Get(NetworkManager::TcpPcb *, protocol_binary_request_header &, Buffer);
+  void Set(NetworkManager::TcpPcb *, protocol_binary_request_header &, std::unique_ptr<IOBuf>);
+  void Get(NetworkManager::TcpPcb *, protocol_binary_request_header &, std::unique_ptr<IOBuf>);
   void Quit(NetworkManager::TcpPcb *, protocol_binary_request_header &);
   void Nop(protocol_binary_request_header &);
 };

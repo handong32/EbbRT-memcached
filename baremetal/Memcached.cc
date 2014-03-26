@@ -27,7 +27,7 @@ const char *ebbrt::Memcached::com2str(uint8_t cmd) {
 }
 
 void ebbrt::Memcached::Preexecute(NetworkManager::TcpPcb *pcb,
-                                  protocol_binary_request_header &h, Buffer b) {
+                                  protocol_binary_request_header &h, std::unique_ptr<IOBuf> b) {
   switch (h.request.opcode) {
   case PROTOCOL_BINARY_CMD_SET:
   case PROTOCOL_BINARY_CMD_SETQ:
@@ -58,20 +58,20 @@ void ebbrt::Memcached::Preexecute(NetworkManager::TcpPcb *pcb,
 }
 
 void ebbrt::Memcached::Get(NetworkManager::TcpPcb *pcb,
-                           protocol_binary_request_header &h, Buffer b) {
+                           protocol_binary_request_header &h, std::unique_ptr<IOBuf> b) {
   // pull key from the request header
-  auto p = b.GetDataPointer();
+  auto p = b->GetDataPointer();
   p.Advance(sizeof(protocol_binary_request_get));
   auto keylenp = reinterpret_cast<char *>(&h.request.keylen);
   auto keylen = (keylenp[1] << 0) | (keylenp[0] << 8); // machine order
-  auto key = std::string(static_cast<char *>(p.Addr()), keylen);
+  auto key = std::string(reinterpret_cast<const char *>(p.Data()), keylen);
 
   // contruct response buffer
   uint16_t status = 0;
   uint8_t extlen = sizeof(uint32_t);
   uint32_t bodylen = extlen;
-  auto buf = Buffer(sizeof(protocol_binary_response_header) + extlen, true);
-  auto res = static_cast<protocol_binary_response_get *>(buf.data());
+  auto buf = IOBuf::Create(sizeof(protocol_binary_response_header)+extlen, true);
+  auto res = reinterpret_cast<protocol_binary_response_get *>(buf->WritableData());
   res->message.header.response.magic = PROTOCOL_BINARY_RES;
   res->message.header.response.opcode = PROTOCOL_BINARY_CMD_GETK;
   res->message.header.response.extlen = extlen;
@@ -88,20 +88,22 @@ void ebbrt::Memcached::Get(NetworkManager::TcpPcb *pcb,
         h.request.opcode == PROTOCOL_BINARY_CMD_GETKQ)
       return;
     if (h.request.opcode == PROTOCOL_BINARY_CMD_GETK) {
-      b += sizeof(protocol_binary_request_header) + h.request.extlen;
-      buf.emplace_back(std::move(b));
-      bodylen += b.size();
+      b->Advance(sizeof(protocol_binary_request_header) + h.request.extlen);
+      bodylen += b->Length();
+      buf->AppendChain(std::move(b));
     }
   } else {
     // cache hit
-    if (h.request.opcode == PROTOCOL_BINARY_CMD_GETK) {
-      b += sizeof(protocol_binary_request_header) + h.request.extlen;
-      buf.emplace_back(std::move(b));
-      bodylen += b.size();
+    auto kv = query->second->Clone();
+    if (h.request.opcode != PROTOCOL_BINARY_CMD_GETK) {
+      // Advance or Retreat to cut off key
+      kv->Advance(sizeof(key));
+    }else
+    {
       res->message.header.response.keylen = h.request.keylen;
     }
-    buf.append(query->second);
-    bodylen += query->second->size();
+    bodylen += kv->Length();
+    buf->AppendChain(std::move(kv));
   }
 
   // network order
@@ -110,33 +112,30 @@ void ebbrt::Memcached::Get(NetworkManager::TcpPcb *pcb,
                         (bodylenp[1] << 16) | (bodylenp[0] << 24);
   res->message.header.response.status = status;
   res->message.header.response.bodylen = bodylen_no;
-  pcb->Send(std::make_shared<const Buffer>(std::move(buf)));
+  pcb->Send(std::move(buf));
 }
 
 void ebbrt::Memcached::Set(NetworkManager::TcpPcb *pcb,
-                           protocol_binary_request_header &h, Buffer b) {
-  auto p = b.GetDataPointer();
+                           protocol_binary_request_header &h, std::unique_ptr<IOBuf> b) {
+  auto p = b->GetDataPointer();
   /// manually correct endianness where necessary
   auto keylenp = reinterpret_cast<char *>(&h.request.keylen);
   auto keylen = (keylenp[1] << 0) | (keylenp[0] << 8);
   auto keyoffset = sizeof(protocol_binary_request_header) + h.request.extlen;
   p.Advance(sizeof(protocol_binary_request_header) + h.request.extlen);
-  auto keyptr = static_cast<char *>(p.Addr());
+  auto keyptr = reinterpret_cast<const char *>(p.Data());
   p.Advance(keylen);
   auto key = std::string(keyptr, keylen);
-
   // point buffer to begining of value
-  b += keyoffset + keylen;
-  // TODO: emplace data to array?
-  map_[key] = std::make_shared<Buffer>(std::move(b));
-
+  b->Advance(keyoffset);
+  map_[key] = std::move(b);
   if (h.request.opcode == PROTOCOL_BINARY_CMD_SET) {
     // construct reply message
-    auto buf = Buffer(sizeof(protocol_binary_response_header), true);
-    auto res = static_cast<protocol_binary_response_header *>(buf.data());
+    auto buf = IOBuf::Create(sizeof(protocol_binary_response_header), true);
+    auto res = reinterpret_cast<protocol_binary_response_header *>(buf->WritableData());
     res->response.magic = PROTOCOL_BINARY_RES;
     res->response.opcode = PROTOCOL_BINARY_CMD_SET;
-    pcb->Send(std::make_shared<const Buffer>(std::move(buf)));
+    pcb->Send(std::move(buf));
   }
 }
 
@@ -144,13 +143,16 @@ void ebbrt::Memcached::Quit(NetworkManager::TcpPcb *pcb,
                             protocol_binary_request_header &h) {
   if (h.request.opcode == PROTOCOL_BINARY_CMD_QUIT) {
     // construct reply message
-    auto buf = Buffer(sizeof(protocol_binary_response_header), true);
-    auto res = static_cast<protocol_binary_response_header *>(buf.data());
+    auto buf = IOBuf::Create(sizeof(protocol_binary_response_header), true);
+    auto res = reinterpret_cast<protocol_binary_response_header *>(buf->WritableData());
     res->response.magic = PROTOCOL_BINARY_RES;
     res->response.opcode = PROTOCOL_BINARY_CMD_QUIT;
-    pcb->Send(std::make_shared<const Buffer>(std::move(buf)));
+    pcb->Send(std::move(buf));
+#ifdef __EBBRT_ENABLE_TRACE__
+        ebbrt::trace::Disable();
+        ebbrt::trace::Dump();
+#endif
   }
-
 }
 
 void ebbrt::Memcached::Nop(protocol_binary_request_header &h) {
@@ -170,24 +172,20 @@ void ebbrt::Memcached::StartListening(uint16_t port) {
   tcp_.Listen();
   tcp_.Accept([this](NetworkManager::TcpPcb pcb) {
     auto p = new NetworkManager::TcpPcb(std::move(pcb));
-    p->Receive([p, this](NetworkManager::TcpPcb &t, Buffer b) {
-      kbugon(b.length() > 1, "handle multiple length buffer\n");
-      if (b.size() >= sizeof(protocol_binary_request_header)) {
-        auto payload = b.GetDataPointer();
-        auto &r = payload.Get<protocol_binary_request_header>();
+    p->Receive([p, this](NetworkManager::TcpPcb &t, std::unique_ptr<IOBuf> b) {
+      kbugon(b->IsChained(), "cannot handle multiple length buffer\n");
+      if (b->Length() >= sizeof(protocol_binary_request_header)) {
+        auto payload = b->GetDataPointer();
+        auto r = payload.Get<protocol_binary_request_header>();
         Preexecute(&t, r, std::move(b));
-      } else if (b.size() == 6) {
+      } else if (b->Length() == 6) {
         // THIS IS AN UGLY KLUDGE FOR MEMCSLAP SUPPORT
         kprintf("Received Text protocol message of len6 (assuming 'QUIT') \n");
-      } else if (b.size() >= 1) {
-        kbugon(true, "Received Non-Memcached Message, size: %d\n", b.size());
+      } else if (b->Length() >= 1) {
+        kbugon(true, "Received Non-Memcached Message, size: %d\n", b->Length());
       } else {
         kprintf("TCP Connection closed\n");
         delete p;
-#ifdef __EBBRT_ENABLE_TRACE__
-        ebbrt::trace::Disable();
-        ebbrt::trace::Dump();
-#endif
       }
     });
     // TCP connection opened

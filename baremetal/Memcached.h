@@ -34,6 +34,7 @@ private:
   void Set(NetworkManager::TcpPcb *, protocol_binary_request_header &, std::unique_ptr<IOBuf>);
   void Get(NetworkManager::TcpPcb *, protocol_binary_request_header &, std::unique_ptr<IOBuf>);
   void Quit(NetworkManager::TcpPcb *, protocol_binary_request_header &);
+  void Flush(NetworkManager::TcpPcb *, protocol_binary_request_header &);
   void Nop(protocol_binary_request_header &);
 };
 } // namespace ebbrt

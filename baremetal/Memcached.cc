@@ -51,6 +51,11 @@ void ebbrt::Memcached::Preexecute(NetworkManager::TcpPcb *pcb,
     other_count_++;
     Quit(pcb, h);
     break;
+  case PROTOCOL_BINARY_CMD_FLUSH:
+  case PROTOCOL_BINARY_CMD_FLUSHQ:
+    other_count_++;
+    Flush(pcb, h);
+    break;
   default:
     Unimplemented(h);
     break;
@@ -73,7 +78,6 @@ void ebbrt::Memcached::Get(NetworkManager::TcpPcb *pcb,
   auto buf = IOBuf::Create(sizeof(protocol_binary_response_header)+extlen, true);
   auto res = reinterpret_cast<protocol_binary_response_get *>(buf->WritableData());
   res->message.header.response.magic = PROTOCOL_BINARY_RES;
-  res->message.header.response.opcode = PROTOCOL_BINARY_CMD_GETK;
   res->message.header.response.extlen = extlen;
 
   // check cache for data
@@ -97,9 +101,11 @@ void ebbrt::Memcached::Get(NetworkManager::TcpPcb *pcb,
     auto kv = query->second->Clone();
     if (h.request.opcode != PROTOCOL_BINARY_CMD_GETK) {
       // Advance or Retreat to cut off key
+      res->message.header.response.opcode = PROTOCOL_BINARY_CMD_GET;
       kv->Advance(sizeof(key));
     }else
     {
+      res->message.header.response.opcode = PROTOCOL_BINARY_CMD_GETK;
       res->message.header.response.keylen = h.request.keylen;
     }
     bodylen += kv->Length();
@@ -155,6 +161,19 @@ void ebbrt::Memcached::Quit(NetworkManager::TcpPcb *pcb,
   }
 }
 
+void ebbrt::Memcached::Flush(NetworkManager::TcpPcb *pcb,
+                            protocol_binary_request_header &h) {
+  map_.clear();
+  if (h.request.opcode == PROTOCOL_BINARY_CMD_FLUSH) {
+    // construct reply message
+    auto buf = IOBuf::Create(sizeof(protocol_binary_response_header), true);
+    auto res = reinterpret_cast<protocol_binary_response_header *>(buf->WritableData());
+    res->response.magic = PROTOCOL_BINARY_RES;
+    res->response.opcode = PROTOCOL_BINARY_CMD_FLUSH;
+    pcb->Send(std::move(buf));
+  }
+}
+
 void ebbrt::Memcached::Nop(protocol_binary_request_header &h) {
   const char *cmd = com2str(h.request.opcode);
   kprintf("%s CMD IS NOP\n", cmd);
@@ -166,11 +185,14 @@ void ebbrt::Memcached::Unimplemented(protocol_binary_request_header &h) {
 }
 
 void ebbrt::Memcached::StartListening(uint16_t port) {
-  ebbrt::kprintf("Memcache ebb starts listening\n");
   port_ = port;
   tcp_.Bind(port);
   tcp_.Listen();
   tcp_.Accept([this](NetworkManager::TcpPcb pcb) {
+#ifdef __EBBRT_ENABLE_TRACE__
+    ebbrt::trace::Enable();
+    ebbrt::trace::AddTracepoint(1);
+#endif
     auto p = new NetworkManager::TcpPcb(std::move(pcb));
     p->Receive([p, this](NetworkManager::TcpPcb &t, std::unique_ptr<IOBuf> b) {
       kbugon(b->IsChained(), "cannot handle multiple length buffer\n");
@@ -184,8 +206,12 @@ void ebbrt::Memcached::StartListening(uint16_t port) {
       } else if (b->Length() >= 1) {
         kbugon(true, "Received Non-Memcached Message, size: %d\n", b->Length());
       } else {
-        kprintf("TCP Connection closed\n");
         delete p;
+#ifdef __EBBRT_ENABLE_TRACE__
+        ebbrt::trace::AddTracepoint(0);
+        ebbrt::trace::Disable();
+        ebbrt::trace::Dump();
+#endif
       }
     });
     // TCP connection opened

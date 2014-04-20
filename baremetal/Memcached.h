@@ -26,6 +26,7 @@ private:
   uint16_t port_;
   NetworkManager::TcpPcb tcp_;
   std::unordered_map<std::string, std::unique_ptr<IOBuf>> map_;
+  std::unordered_map<std::string, std::unique_ptr<IOBuf>> queued_receives_;
   static const char *com2str(uint8_t);
 
   void Preexecute(NetworkManager::TcpPcb *, protocol_binary_request_header &,

@@ -191,9 +191,8 @@ void ebbrt::Memcached::StartListening(uint16_t port) {
   tcp_.Accept([this](NetworkManager::TcpPcb pcb) { new TcpSession(this, std::move(pcb));});
 }
 
-void
-ebbrt::Memcached::TcpSession::Receive(NetworkManager::TcpPcb &t,
-                                      std::unique_ptr<IOBuf> b) {
+void ebbrt::Memcached::TcpSession::Receive(NetworkManager::TcpPcb &t,
+                                           std::unique_ptr<IOBuf> b) {
   // check if we've queued a previous partial packet
   std::unique_ptr<IOBuf> *buf;
   bool in_queue = false;
@@ -212,11 +211,9 @@ ebbrt::Memcached::TcpSession::Receive(NetworkManager::TcpPcb &t,
         sizeof(protocol_binary_request_header) + htonl(r.request.bodylen);
     auto chain_len = (*buf)->ComputeChainDataLength();
     if (chain_len < message_len) {
-      if (queued_bufs_ == nullptr) {
+      if (!in_queue) {
         queued_bufs_ = std::move((*buf));
-      } else {
-        queued_bufs_->Prev()->AppendChain(std::move((*buf)));
-      }
+      }      
       return;
     } else if (chain_len == message_len) {
       mcd_->Preexecute(&t, r, std::move((*buf)));
@@ -235,11 +232,6 @@ ebbrt::Memcached::TcpSession::Receive(NetworkManager::TcpPcb &t,
            (*buf)->Length());
   } else {
     delete this;
-#ifdef __EBBRT_ENABLE_TRACE__
-    ebbrt::trace::AddTracepoint(0);
-    ebbrt::trace::Disable();
-    ebbrt::trace::Dump();
-#endif
   }
 }
 
@@ -252,56 +244,3 @@ ebbrt::Memcached::TcpSession::TcpSession(Memcached *mcd,
   tcp_.Receive([this](NetworkManager::TcpPcb &t,
                       std::unique_ptr<IOBuf> b) { Receive(t, std::move(b)); });
 }
-
-    //    auto p = new NetworkManager::TcpPcb(std::move(pcb));
- //   p->DisableNagle();
-//    p->Receive([p, this](NetworkManager::TcpPcb &t, std::unique_ptr<IOBuf> b) {
-//
-//      // check if we've queued a previous partial packet from this netaddr 
-//      // i.e., "127.0.0.1:8888"
-//      std::stringstream ss;
-//      std::string netid;
-//      ss << t.GetRemoteAddress().addr << ":" << t.GetRemotePort();
-//      ss >> netid;
-//      auto it = queued_receives_.find(netid);
-//      bool in_queue = false;
-//      std::unique_ptr<IOBuf> *buf;
-//      if (it != queued_receives_.end()) {
-//        it->second->Prev()->AppendChain(std::move(b));
-//        in_queue = true;
-//        buf = &it->second;
-//      } else {
-//        buf = &b;
-//      }
-//      if ((*buf)->Length() >= sizeof(protocol_binary_request_header)) {
-//        auto payload = (*buf)->GetDataPointer();
-//        auto r = payload.Get<protocol_binary_request_header>();
-//        auto message_len = sizeof(protocol_binary_request_header)  + htonl(r.request.bodylen);
-//        auto chain_len = (*buf)->ComputeChainDataLength();
-//        if (chain_len < message_len && !in_queue) {
-//          // we need to put the data in the queue
-//          queued_receives_.emplace(netid, std::move(*buf));
-//          return;
-//        } else if (chain_len == message_len) {
-//          Preexecute(&t, r, std::move((*buf)));
-//          if (in_queue) {
-//            queued_receives_.erase(it);
-//          }
-//        } else if (chain_len > message_len) {
-//          kabort("memcached: chain_len[%d] > message_len[%d]\n", chain_len, message_len);
-//        }
-//      } else if ((*buf)->Length() == 6) {
-//        // THIS IS AN UGLY KLUDGE FOR MEMCSLAP SUPPORT
-//        kprintf("Received Text protocol message of len6 (assuming 'QUIT') \n");
-//      } else if ((*buf)->Length() >= 1) {
-//        kbugon(true, "Received Non-Memcached Message, size: %d\n", (*buf)->Length());
-//      } else {
-//        delete p;
-//#ifdef __EBBRT_ENABLE_TRACE__
-//        ebbrt::trace::AddTracepoint(0);
-//        ebbrt::trace::Disable();
-//        ebbrt::trace::Dump();
-//#endif
-//      }
-//    });
-//    // TCP connection opened

@@ -14,19 +14,28 @@
 
 namespace ebbrt {
 class Memcached : public StaticSharedEbb<Memcached>, public CacheAligned {
-
 public:
   Memcached();
   void StartListening(uint16_t port);
 
 private:
+  class TcpSession {
+  public:
+    TcpSession();
+    TcpSession(Memcached*, NetworkManager::TcpPcb);
+  private:
+    void Receive(NetworkManager::TcpPcb &t, std::unique_ptr<IOBuf> b);
+    Memcached *mcd_;
+    NetworkManager::TcpPcb tcp_;
+    std::unique_ptr<IOBuf> queued_bufs_;
+  }; 
+
   int set_count_;
   int get_count_;
   int other_count_;
-  uint16_t port_;
+  uint16_t listening_port_;
   NetworkManager::TcpPcb tcp_;
-  std::unordered_map<std::string, std::unique_ptr<IOBuf>> map_;
-  std::unordered_map<std::string, std::unique_ptr<IOBuf>> queued_receives_;
+  std::unordered_map<std::string, std::unique_ptr<IOBuf> > map_;
   static const char *com2str(uint8_t);
 
   void Preexecute(NetworkManager::TcpPcb *, protocol_binary_request_header &,

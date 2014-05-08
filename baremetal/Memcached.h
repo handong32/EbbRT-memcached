@@ -38,14 +38,13 @@ private:
   std::unordered_map<std::string, std::unique_ptr<IOBuf> > map_;
   static const char *com2str(uint8_t);
 
-  void Preexecute(NetworkManager::TcpPcb *, protocol_binary_request_header &,
-                  std::unique_ptr<IOBuf>);
-  void Unimplemented(protocol_binary_request_header &);
-  void Set(NetworkManager::TcpPcb *, protocol_binary_request_header &, std::unique_ptr<IOBuf>);
-  void Get(NetworkManager::TcpPcb *, protocol_binary_request_header &, std::unique_ptr<IOBuf>);
-  void Quit(NetworkManager::TcpPcb *, protocol_binary_request_header &);
-  void Flush(NetworkManager::TcpPcb *, protocol_binary_request_header &);
+  void Set(std::unique_ptr<IOBuf>, uint32_t);
+  std::unique_ptr<IOBuf> Get(std::unique_ptr<IOBuf>, uint32_t);
+  void Quit();
+  void Flush();
+// these are binary specific.. for now
   void Nop(protocol_binary_request_header &);
+  void Unimplemented(protocol_binary_request_header &);
 };
 } // namespace ebbrt
 

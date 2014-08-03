@@ -19,6 +19,19 @@ public:
   void StartListening(uint16_t port);
 
 private:
+  class GetResponse {
+  public:
+    GetResponse();
+    GetResponse(std::unique_ptr<IOBuf>);
+    std::unique_ptr<IOBuf> Ascii();
+    std::unique_ptr<IOBuf> Binary();
+  private:
+    bool binary_;
+    std::unique_ptr<IOBuf> request_;
+    std::unique_ptr<IOBuf> ascii_response_;
+    std::unique_ptr<IOBuf> binary_response_;
+  }; 
+  
   class TcpSession {
   public:
     TcpSession();
@@ -28,24 +41,22 @@ private:
     Memcached *mcd_;
     NetworkManager::TcpPcb tcp_;
     std::unique_ptr<IOBuf> queued_bufs_;
-  }; 
+  };
 
-  int set_count_;
-  int get_count_;
-  int other_count_;
-  uint16_t listening_port_;
-  NetworkManager::TcpPcb tcp_;
-  std::unordered_map<std::string, std::unique_ptr<IOBuf> > map_;
+  
+  std::unique_ptr<IOBuf> ProcessAscii(std::unique_ptr<IOBuf>, std::string);
+  std::unique_ptr<IOBuf> ProcessBinary(std::unique_ptr<IOBuf>, protocol_binary_response_header*);
   static const char *com2str(uint8_t);
-
-  void Set(std::unique_ptr<IOBuf>, uint32_t);
-  std::unique_ptr<IOBuf> Get(std::unique_ptr<IOBuf>, uint32_t);
+  GetResponse* Get(std::unique_ptr<IOBuf>, std::string);
+  void Set(std::unique_ptr<IOBuf>, std::string);
   void Quit();
   void Flush();
-// these are binary specific.. for now
+  NetworkManager::TcpPcb tcp_;
+  std::unordered_map<std::string, GetResponse> map_;
+//fixme: below two are binary specific.. for now
   void Nop(protocol_binary_request_header &);
   void Unimplemented(protocol_binary_request_header &);
 };
-} // namespace ebbrt
+} //namespace ebbrt
 
 #endif // MEMCACHED_H

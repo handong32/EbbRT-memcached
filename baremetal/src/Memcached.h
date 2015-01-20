@@ -11,12 +11,13 @@
 #include <ebbrt/SpinLock.h>
 #include <ebbrt/StaticSharedEbb.h>
 #include "protocol_binary.h"
+#include "tcp_handler.hpp"
 
 namespace ebbrt {
 class Memcached : public StaticSharedEbb<Memcached>, public CacheAligned {
 public:
   Memcached();
-  void StartListening(uint16_t port);
+  void Start(uint16_t port);
 
 private:
   class GetResponse {
@@ -32,15 +33,18 @@ private:
     std::unique_ptr<IOBuf> binary_response_;
   }; 
   
-  class TcpSession {
+  class TcpSession : public TcpHandler {
   public:
-    TcpSession();
-    TcpSession(Memcached*, NetworkManager::TcpPcb);
+    TcpSession(Memcached *mcd, ebbrt::NetworkManager::TcpPcb pcb)
+      : TcpHandler(std::move(pcb)), mcd_(mcd) {}
+    void Close(){}
+    void Abort(){}
+    void Receive(std::unique_ptr<MutIOBuf> b);
+
   private:
-    void Receive(NetworkManager::TcpPcb &t, std::unique_ptr<IOBuf> b);
+    std::unique_ptr<ebbrt::MutIOBuf> buf_;
+    ebbrt::NetworkManager::TcpPcb pcb_;
     Memcached *mcd_;
-    NetworkManager::TcpPcb tcp_;
-    std::unique_ptr<IOBuf> queued_bufs_;
   };
 
   
@@ -51,9 +55,9 @@ private:
   void Set(std::unique_ptr<IOBuf>, std::string);
   void Quit();
   void Flush();
-  NetworkManager::TcpPcb tcp_;
+  NetworkManager::ListeningTcpPcb listening_pcb_;
   std::unordered_map<std::string, GetResponse> map_;
-//fixme: below two are binary specific.. for now
+  //fixme: below two are binary specific.. for now
   void Nop(protocol_binary_request_header &);
   void Unimplemented(protocol_binary_request_header &);
 };

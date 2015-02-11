@@ -10,6 +10,7 @@
 #include <ebbrt/Net.h>
 #include <ebbrt/SpinLock.h>
 #include <ebbrt/StaticSharedEbb.h>
+#include <ebbrt/SharedIOBufRef.h>
 #include "protocol_binary.h"
 #include "tcp_handler.hpp"
 
@@ -20,17 +21,31 @@ public:
   void Start(uint16_t port);
 
 private:
+  /**
+   * GetResponse - response strings are stored as the value of hash table
+   * allowing minimal packet construction on a GET response.
+   *
+   * GetReponse binary format: <ext,key,value> e.g, <0001123>
+   */
   class GetResponse {
   public:
     GetResponse();
+    /** GetResponse() - store only request string on default path
+     */
     GetResponse(std::unique_ptr<IOBuf>);
+    /** GetResponse::Ascii() - return the ascii formatted response string.
+     * Format the string from original request if it does not exist.
+     */
     std::unique_ptr<IOBuf> Ascii();
+    /** GetResponse::Binary() - return binary formatted response string.
+     * Format the string from original request if it does not exist.
+     */
     std::unique_ptr<IOBuf> Binary();
   private:
     bool binary_;
-    std::unique_ptr<IOBuf> request_;
-    std::unique_ptr<IOBuf> ascii_response_;
-    std::unique_ptr<IOBuf> binary_response_;
+    std::unique_ptr<MutSharedIOBufRef> request_;
+    std::unique_ptr<MutSharedIOBufRef> binary_response_;
+    //std::unique_ptr<MutSharedIOBufRef> ascii_response_;
   }; 
   
   class TcpSession : public TcpHandler {

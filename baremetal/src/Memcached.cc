@@ -16,9 +16,16 @@ ebbrt::Memcached::Memcached(){ }
 ebbrt::Memcached::GetResponse::GetResponse(){}
 
 ebbrt::Memcached::GetResponse::GetResponse(std::unique_ptr<IOBuf> b){
-
+  auto bptr = b.get();
+  auto remainder = b->Next();
   request_ =
       IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView, std::move(b));
+  while (remainder != bptr) {
+    auto next = remainder->Next();
+    auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
+    request_->PrependChain(std::move(ref));
+    remainder = next;
+  }
   binary_response_ = nullptr;
   binary_ = true;
 }
@@ -34,17 +41,32 @@ std::unique_ptr<ebbrt::IOBuf> ebbrt::Memcached::GetResponse::Binary() {
     //  We optimise  binary response for the GETK which requires extras, key and
     // value. Format of stored request is <extra,key,value>
     kassert(binary_ == true); // We do not yet support mixed ASCII and BINARY
+    auto rptr = request_.get();
+    auto remainder = request_->Next();
     binary_response_ =
         IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView, *request_);
-    binary_response_->Advance(sizeof(protocol_binary_request_header) + 4);
-    //TODO: clear extras byte (is this nessessary?)
-    // auto extrap = reinterpret_cast<uint32_t
-    // *>(binary_response_->WritableData());
-    //*extrap = 0;
+    while (remainder != rptr) {
+      auto next = remainder->Next();
+      auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
+      binary_response_->PrependChain(std::move(ref));
+      remainder = next;
+    }
+    binary_response_->AdvanceChain(sizeof(protocol_binary_request_header));
+   // auto md = binary_response_->GetMutDataPointer();
+   // TODO: clear flag bits
+   // md.Get<uint32_t>() = 0;
+    binary_response_->AdvanceChain(sizeof(uint32_t));
   }
+  auto brptr = binary_response_.get();
+  auto remainder = binary_response_->Next();
   auto ret = IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView,
                                               *binary_response_);
-  ret->Advance(sizeof(protocol_binary_request_header) + 4);
+  while (remainder != brptr) {
+    auto next = remainder->Next();
+    auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
+    ret->PrependChain(std::move(ref));
+    remainder = next;
+  }
   return std::move(ret);
 }
 
@@ -53,6 +75,8 @@ ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b, std::string key) {
   auto query = map_.find(key);
   if (query == map_.end()) {
     // cache miss
+
+    kprintf("miss:%s\n",key.c_str());
     return nullptr;
   } else {
     // cache hit
@@ -125,7 +149,6 @@ void ebbrt::Memcached::Start(uint16_t port) {
 void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
 
   kassert(b->Length() != 0);
-
   // restore any queued buffers
   if (buf_) {
     buf_->PrependChain(std::move(b));
@@ -193,16 +216,13 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
                 static_cast<MutIOBuf *>(msg->UnlinkEnd(buf).release());
             end = std::unique_ptr<MutIOBuf>(tmp_end);
           }
-
           auto remainder = end->Pop();
-
           // make a reference counted IOBuf to the end
           auto rc_end = IOBuf::Create<MutSharedIOBufRef>(
               SharedIOBufRef::CloneView, std::move(end));
           // create a copy (increments ref count)
           buf_ = IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView,
                                                   *rc_end);
-
           // trim and append to msg
           rc_end->TrimEnd(buf_len - message_len);
           if (first) {
@@ -211,7 +231,7 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
             msg->PrependChain(std::move(rc_end));
           }
 
-          // advance and attach remainder to
+          // advance to start of next message
           buf_->Advance(message_len);
           if (remainder)
             buf_->PrependChain(std::move(remainder));
@@ -221,14 +241,14 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
         first = false;
       } // end for(buf:msg)
     } else {
-      // since message_len > chain_len we must
-      // wait for more data
+      // since message_len > chain_len we must wait for more data
       return;
     }
 
     // msg now holds exactly one message
     if (binary) {
       std::unique_ptr<IOBuf> rbuf(nullptr);
+      // fixme: use datapointer
       auto reply = MakeUniqueIOBuf(sizeof(protocol_binary_response_header), true);
       auto rehead = reinterpret_cast<protocol_binary_response_header *>(reply->MutData());
       rbuf = mcd_->ProcessBinary(std::move(msg), rehead);
@@ -241,7 +261,7 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
       }
     } else {
       // check for ascii protcol
-      kabort("ascii unsupported\n");
+      kabort("ascii is unsupported\n");
       //   auto bufstr = (*buf)->ToString();
       //   // extract ascii command line
       //   auto head = bufstr.substr(0, bufstr.find("\r\n"));
@@ -259,124 +279,83 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
   return;
 }
 
-//  auto bp = ((*buf))->Data();
-//  std::unique_ptr<IOBuf> rbuf(nullptr);
-//  // check for binary protocol
-//  if (bp[0] == PROTOCOL_BINARY_REQ){
-//    auto chain_len = (*buf)->ComputeChainDataLength();
-//    auto bdata = (*buf)->GetDataPointer();
-//    auto h = bdata.Get<protocol_binary_request_header>();
-//    // confirm we have the full message
-//    auto message_len =
-//      sizeof(protocol_binary_request_header) + htonl(h.request.bodylen);
-//    if (chain_len < message_len) {
-//      if (!in_queue)
-//        queued_bufs_ = std::move((*buf));
-//      return;
-//    } else {
-//      kassert(chain_len == message_len);
-//      if (in_queue) { queued_bufs_.reset(nullptr); }
-//      // process the TCP request
-//      auto reply = IOBuf::Create(sizeof(protocol_binary_response_header), true);
-//      auto rehead = reinterpret_cast<protocol_binary_response_header*>(
-//          reply->WritableData());
-//      rbuf = mcd_->ProcessBinary(std::move((*buf)), rehead);
-//      if (rehead->response.magic == PROTOCOL_BINARY_RES) {
-//        if (rbuf) {
-//          reply->AppendChain(std::move(rbuf));
-//        }
-//        t.Send(std::move(reply));
-//      }
-//      return;
-//    }
-//  } else {
-//    // check for ascii protcol
-//    auto bufstr = (*buf)->ToString();
-//    // extract ascii command line
-//    auto head = bufstr.substr(0, bufstr.find("\r\n"));
-//    kbugon(head.empty());
-//    // we have received a full request
-//    rbuf = mcd_->ProcessAscii(std::move((*buf)), head);
-//    if (rbuf) {
-//      kprintf("sending ascii reply\n");
-//      // t.Send(std::move(rbuf));
-//    }
-//    return;
-//  }
-
-std::unique_ptr<ebbrt::IOBuf>
-ebbrt::Memcached::ProcessAscii(std::unique_ptr<IOBuf> buf, std::string head){
-
-  // commands: set, add, replace, prepend, cas, get, gets, delete, incr, decr,
-  // touch
-  auto cmd_end = head.find(' ', 0);
-  auto cmd = head.substr(0, cmd_end);
-
-  if (cmd == "set") {
-    auto key_end = head.find(' ', cmd_end + 1);
-    //auto flag_end = head.find(' ', key_end + 1);
-    //auto exp_end = head.find(' ', flag_end + 1);
-    //auto size_end = head.find(' ', exp_end + 1);
-    //// todo: optional noreply
-    auto key = head.substr(cmd_end + 1, key_end - cmd_end - 1);
-    // auto flag = head.substr(key_end + 1, flag_end - key_end - 1);
-    // auto exp = head.substr(flag_end + 1, exp_end - flag_end - 1);
-    //auto size = head.substr(exp_end + 1, size_end - exp_end - 1);
-    //auto key_len = key.length();
-    //auto message_len = key_len + atoi(size.c_str()) + 4; // 4 for deliminators
-
-    //// confirm we have the full message
-    //if (chain_len < message_len) {
-    //  if (!in_queue)
-    //    queued_bufs_ = std::move((*buf));
-    //  return;
-    //} else if (chain_len > message_len) {
-    //  kabort("memcached ascii: chain_len[%d] > message_len[%d]\n", chain_len,
-    //         message_len);
-    //}
-    // looks like we have a good set
-    //mcd_->Set(std::move((*buf)), key);
-    kprintf("set: %s\n", head.c_str());
-  } else if (cmd == "get")
-    kprintf("get: %s\n", head.c_str());
-  else if (cmd == "gets")
-    kprintf("gets: %s\n", head.c_str());
-  else if (cmd == "quit")
-    kprintf("quit:%s\n", head.c_str());
-  else
-    kprintf("cmd:%s unimplemented\n", cmd.c_str());
-  // end ascii processing
-  return nullptr;
-}
+//std::unique_ptr<ebbrt::IOBuf>
+//ebbrt::Memcached::ProcessAscii(std::unique_ptr<IOBuf> buf, std::string head){
+//
+//  // commands: set, add, replace, prepend, cas, get, gets, delete, incr, decr,
+//  // touch
+//  auto cmd_end = head.find(' ', 0);
+//  auto cmd = head.substr(0, cmd_end);
+//
+//  if (cmd == "set") {
+//    auto key_end = head.find(' ', cmd_end + 1);
+//    //auto flag_end = head.find(' ', key_end + 1);
+//    //auto exp_end = head.find(' ', flag_end + 1);
+//    //auto size_end = head.find(' ', exp_end + 1);
+//    //// todo: optional noreply
+//    auto key = head.substr(cmd_end + 1, key_end - cmd_end - 1);
+//    // auto flag = head.substr(key_end + 1, flag_end - key_end - 1);
+//    // auto exp = head.substr(flag_end + 1, exp_end - flag_end - 1);
+//    //auto size = head.substr(exp_end + 1, size_end - exp_end - 1);
+//    //auto key_len = key.length();
+//    //auto message_len = key_len + atoi(size.c_str()) + 4; // 4 for deliminators
+//
+//    //// confirm we have the full message
+//    //if (chain_len < message_len) {
+//    //  if (!in_queue)
+//    //    queued_bufs_ = std::move((*buf));
+//    //  return;
+//    //} else if (chain_len > message_len) {
+//    //  kabort("memcached ascii: chain_len[%d] > message_len[%d]\n", chain_len,
+//    //         message_len);
+//    //}
+//    // looks like we have a good set
+//    //mcd_->Set(std::move((*buf)), key);
+//    kprintf("set: %s\n", head.c_str());
+//  } else if (cmd == "get")
+//    kprintf("get: %s\n", head.c_str());
+//  else if (cmd == "gets")
+//    kprintf("gets: %s\n", head.c_str());
+//  else if (cmd == "quit")
+//    kprintf("quit:%s\n", head.c_str());
+//  else
+//    kprintf("cmd:%s unimplemented\n", cmd.c_str());
+//  // end ascii processing
+//  return nullptr;
+//}
 
 std::unique_ptr<ebbrt::IOBuf>
 ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf, protocol_binary_response_header* rhead) {
 
-    ebbrt::Memcached::GetResponse* res;
-    std::unique_ptr<IOBuf> kv(nullptr);
+    ebbrt::Memcached::GetResponse* res; // response buffer
+    std::unique_ptr<IOBuf> kv(nullptr); // key-value IObuf
     std::string key;
-    auto bdata = buf->GetDataPointer();
-    auto h = bdata.Get<protocol_binary_request_header>();
-    uint32_t keylen = ntohl(h.request.keylen << 16);
-    auto keyoffset = sizeof(protocol_binary_request_header) + h.request.extlen;
-    // In the case of a GETK miss we make a copy of the key to return
-    auto keybuf = MakeUniqueIOBuf(keylen, true);
-    auto keyptr = keybuf->GetMutDataPointer();
-
-    rhead->response.magic = 0;
-    rhead->response.opcode = h.request.opcode;
     uint32_t bodylen = 0;
     uint16_t status = 0;
 
+    auto bdata = buf->GetDataPointer();
+    // pull data from incoming header
+     auto h = bdata.Get<protocol_binary_request_header>();
+    int32_t keylen = ntohl(h.request.keylen << 16);
+    kassert(keylen > 0);
+    // pull key into string
+    bdata.Advance(h.request.extlen);
+    auto keyptr = bdata.Get(keylen);
+    key = std::string(reinterpret_cast<const char *>(keyptr), keylen);
+  
+    // inthe case of GETK miss, we need to reply with key
+    auto keybuf = MakeUniqueIOBuf(keylen, true);
+    auto keybufptr = keybuf->GetMutDataPointer();
+
+    // set response header defaults
+    // we use magic as a signal to send or remaining quiet
+    rhead->response.magic = 0; 
+    rhead->response.opcode = h.request.opcode;
     switch (h.request.opcode) {
       case PROTOCOL_BINARY_CMD_SET:
         rhead->response.magic = PROTOCOL_BINARY_RES;
         // no break
       case PROTOCOL_BINARY_CMD_SETQ:
-        buf->Advance(keyoffset);
-        // fixme: should use IObuf interface 
-        key = std::string(reinterpret_cast<const char *>(buf->Data()), keylen);
-        buf->Retreat(keyoffset);
         Set(std::move((buf)), key);
         return nullptr;
       case PROTOCOL_BINARY_CMD_GET:
@@ -384,33 +363,26 @@ ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf, protocol_binary_resp
       case PROTOCOL_BINARY_CMD_GETK:
       case PROTOCOL_BINARY_CMD_GETKQ:
         rhead->response.magic = PROTOCOL_BINARY_RES;
-        // incase of miss, create copy of key for response 
-        buf->Advance(keyoffset);
-        key = std::string(reinterpret_cast<const char *>(buf->Data()), keylen);
-        buf->Retreat(keyoffset);
-        std::memcpy(keyptr.Data(), key.c_str(), keylen);
-
         // binary() returns <ext, key, value>
         rhead->response.extlen = sizeof(uint32_t);
         res = Get(std::move((buf)), key);
         if (res) {
-          // binary() returns <ext, key, value>
+          // Hit
+          // GetResponse::Binary() returns IOBuf containing <ext, key, value>
           kv = res->Binary();
-//          // this should step to the value
-//          kv->Advance( sizeof(uint32_t) + keylen);
-//          bodylen += kv->ComputeChainDataLength();
-          bodylen += kv->ComputeChainDataLength(); //####### 
+          bodylen += kv->ComputeChainDataLength(); 
         } else {
-         
-          // GTEQ has no response
+          // Miss
           if (h.request.opcode == PROTOCOL_BINARY_CMD_GETQ ||
               h.request.opcode == PROTOCOL_BINARY_CMD_GETKQ) {
-            rhead->response.magic = PROTOCOL_BINARY_RES;
+            // If GETQ we send no response
+            rhead->response.magic = 0;
             return nullptr;
           }
           // return miss response + key
           status = PROTOCOL_BINARY_RESPONSE_KEY_ENOENT;
-          bodylen += keybuf->Length();
+          std::memcpy(keybufptr.Data(), key.c_str(), keylen);
+          bodylen += keylen;
           kv = std::move(keybuf);
         }
         break;
@@ -431,6 +403,7 @@ ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf, protocol_binary_resp
         Unimplemented(h);
         return nullptr;
     }
+    
 
     rhead->response.keylen = (htonl(keylen) >> 16);
     rhead->response.status = (htonl(status) >> 16);

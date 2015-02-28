@@ -251,71 +251,12 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
         Send(std::move(reply));
       }
     } else {
-      // check for ascii protcol
+      // binary header not identifiable.. assuming ASCII format
       kabort("ASCII is unsupported\n");
-      //   auto bufstr = (*buf)->ToString();
-      //   // extract ascii command line
-      //   auto head = bufstr.substr(0, bufstr.find("\r\n"));
-      //   kbugon(head.empty());
-      //   // we have received a full request
-      //   rbuf = mcd_->ProcessAscii(std::move((*buf)), head);
-      //   if (rbuf) {
-      //     kprintf("sending ascii reply\n");
-      //     // Send(std::move(rbuf));
-      //   }
-      //   return;
-      //
     }
   } // end while(buf_)
   return;
 }
-
-// std::unique_ptr<ebbrt::IOBuf>
-// ebbrt::Memcached::ProcessAscii(std::unique_ptr<IOBuf> buf, std::string head){
-//
-//  // commands: set, add, replace, prepend, cas, get, gets, delete, incr, decr,
-//  // touch
-//  auto cmd_end = head.find(' ', 0);
-//  auto cmd = head.substr(0, cmd_end);
-//
-//  if (cmd == "set") {
-//    auto key_end = head.find(' ', cmd_end + 1);
-//    //auto flag_end = head.find(' ', key_end + 1);
-//    //auto exp_end = head.find(' ', flag_end + 1);
-//    //auto size_end = head.find(' ', exp_end + 1);
-//    //// todo: optional noreply
-//    auto key = head.substr(cmd_end + 1, key_end - cmd_end - 1);
-//    // auto flag = head.substr(key_end + 1, flag_end - key_end - 1);
-//    // auto exp = head.substr(flag_end + 1, exp_end - flag_end - 1);
-//    //auto size = head.substr(exp_end + 1, size_end - exp_end - 1);
-//    //auto key_len = key.length();
-//    //auto message_len = key_len + atoi(size.c_str()) + 4; // 4 for
-// deliminators
-//
-//    //// confirm we have the full message
-//    //if (chain_len < message_len) {
-//    //  if (!in_queue)
-//    //    queued_bufs_ = std::move((*buf));
-//    //  return;
-//    //} else if (chain_len > message_len) {
-//    //  kabort("memcached ascii: chain_len[%d] > message_len[%d]\n",
-// chain_len,
-//    //         message_len);
-//    //}
-//    // looks like we have a good set
-//    //mcd_->Set(std::move((*buf)), key);
-//    kprintf("set: %s\n", head.c_str());
-//  } else if (cmd == "get")
-//    kprintf("get: %s\n", head.c_str());
-//  else if (cmd == "gets")
-//    kprintf("gets: %s\n", head.c_str());
-//  else if (cmd == "quit")
-//    kprintf("quit:%s\n", head.c_str());
-//  else
-//    kprintf("cmd:%s unimplemented\n", cmd.c_str());
-//  // end ascii processing
-//  return nullptr;
-//}
 
 std::unique_ptr<ebbrt::IOBuf>
 ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf,
@@ -337,7 +278,6 @@ ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf,
   if(keylen > 0){
     key = std::string(reinterpret_cast<const char *>(keyptr), keylen);
   }
-
 
   // set response header defaults
   // we use magic as a signal to send or remaining quiet

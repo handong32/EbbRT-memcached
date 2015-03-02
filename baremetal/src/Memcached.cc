@@ -138,6 +138,7 @@ void ebbrt::Memcached::Start(uint16_t port) {
 }
 
 void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
+
   kassert(b->Length() != 0);
   // restore any queued buffers
   if (buf_) {
@@ -146,13 +147,15 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
     buf_ = std::move(b);
   }
 
+  // reply buffer pointer
+  std::unique_ptr<MutIOBuf> rbuf(nullptr);
+
   // process buffer chain
   while (buf_) {
     // inspeact buffer head
     auto bp = buf_->Data();
     auto dp = buf_->GetDataPointer();
     auto chain_len = buf_->ComputeChainDataLength();
-    auto binary = true;
 
     // set protocol {binary, ascii} specifics
     unsigned int head_len, body_len, message_len;
@@ -161,14 +164,14 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
       head_len = sizeof(protocol_binary_request_header);
       // Do we have enough data for a header?
       if (chain_len < head_len) {
-        return; // return preserves buf_ 
+        break; // preservinf partial packer in buf_
       }
       auto h = dp.Get<protocol_binary_request_header>();
       body_len = htonl(h.request.bodylen);
       message_len = head_len + body_len;
     } else {
       kabort("Unknown msg header \n");
-      return;
+      // fixme: should we return here???
     }
 
     // start processing requests
@@ -229,32 +232,107 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
         message_len -= buf_len;
         first = false;
       } // end for(buf:msg)
-    } else {
-      // since message_len > chain_len we wait for more data
-      return;
+    } 
+    else {
+      // since message_len > chain_len we simply wait for more data
+      break;
     }
 
     // msg now holds exactly one message
-    if (binary) {
-      std::unique_ptr<IOBuf> rbuf(nullptr);
-      // fixme: use datapointer
-      auto reply =
-          MakeUniqueIOBuf(sizeof(protocol_binary_response_header), true);
-      auto rehead =
-          reinterpret_cast<protocol_binary_response_header *>(reply->MutData());
-      rbuf = mcd_->ProcessBinary(std::move(msg), rehead);
-      // We send the response if response.magic is set,
-      if (rehead->response.magic == PROTOCOL_BINARY_RES) {
-        if (rbuf) {
-          reply->AppendChain(std::move(rbuf));
-        }
-        Send(std::move(reply));
+    std::unique_ptr<IOBuf> replybuf(nullptr);
+    auto reply = MakeUniqueIOBuf(sizeof(protocol_binary_response_header), true);
+    // fixme: pass mutdatapointer instead of pointer
+    auto rehead =
+        reinterpret_cast<protocol_binary_response_header *>(reply->MutData());
+    replybuf = mcd_->ProcessBinary(std::move(msg), rehead);
+    // We send the response if response.magic is set,
+    if (rehead->response.magic == PROTOCOL_BINARY_RES) {
+      if (replybuf) {
+        reply->AppendChain(std::move(replybuf));
       }
-    } else {
-      // binary header not identifiable.. assuming ASCII format
-      kabort("ASCII is unsupported\n");
+      // queue data to send
+      if (rbuf == nullptr) {
+        rbuf = std::move(reply);
+      } else {
+        rbuf->AppendChain(std::move(reply));
+      }
     }
   } // end while(buf_)
+
+  // Response data is in rbuf
+  // Here we split a large reply message into multiple tcp sends
+  // TODO: interface to find correct MTU size (assuming 1500)
+  if (rbuf == nullptr) {
+    return;
+  }
+
+  const auto tcp_message_len = 1480; // MTU - tcp header
+  auto chain_len = rbuf->ComputeChainDataLength();
+
+  if (chain_len == 0) {
+    return;
+  }
+
+  while (rbuf) {
+    std::unique_ptr<MutIOBuf> msg;
+    if (likely(chain_len <= tcp_message_len)) {
+      // We have a full message
+      msg = std::move(rbuf);
+    } else if (chain_len > tcp_message_len) {
+
+      // After this loop msg should hold exactly one message and everything
+      // else will be in rbuf
+      bool first = true;
+      msg = std::move(rbuf);
+      uint32_t available_space = tcp_message_len;
+      for (auto &buf : *msg) {
+        kassert(available_space > 0);
+        // for each buffer
+        auto buf_len = buf.Length();
+        if (buf_len == available_space) {
+          // If the first buffer contains the full message
+          // Move the remainder of chain into buf, while our message remains
+          // in msg_
+          rbuf = std::unique_ptr<MutIOBuf>(
+              static_cast<MutIOBuf *>(msg->UnlinkEnd(*buf.Next()).release()));
+          break;
+        } else if (buf_len > available_space) {
+          // Here we need to split the buffer into multiple messages
+          std::unique_ptr<MutIOBuf> end;
+          if (first) {
+            end = std::move(msg);
+          } else {
+            auto tmp_end =
+                static_cast<MutIOBuf *>(msg->UnlinkEnd(buf).release());
+            end = std::unique_ptr<MutIOBuf>(tmp_end);
+          }
+          auto remainder = end->Pop();
+          // make a reference counted IOBuf to the end
+          auto rc_end = IOBuf::Create<MutSharedIOBufRef>(
+              SharedIOBufRef::CloneView, std::move(end));
+          // create a copy (increments ref count)
+          rbuf = IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView,
+                                                  *rc_end);
+          // trim and append to msg
+          rc_end->TrimEnd(buf_len - available_space);
+          if (first) {
+            msg = std::move(rc_end);
+          } else {
+            msg->PrependChain(std::move(rc_end));
+          }
+
+          // advance to start of next message
+          rbuf->Advance(available_space);
+          if (remainder)
+            rbuf->PrependChain(std::move(remainder));
+          break;
+        }
+        available_space -= buf_len;
+        first = false;
+      } // end for(buf:msg)
+    }
+    Send(std::move(msg));
+  } // end while(rbuf)
   return;
 }
 

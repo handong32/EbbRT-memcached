@@ -74,8 +74,6 @@ ebbrt::Memcached::GetResponse *ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b,
   auto query = map_.find(key);
   if (query == map_.end()) {
     // cache miss
-
-    kprintf("miss:%s\n", key.c_str());
     return nullptr;
   } else {
     // cache hit

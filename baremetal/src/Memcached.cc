@@ -230,8 +230,7 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
         message_len -= buf_len;
         first = false;
       } // end for(buf:msg)
-    } 
-    else {
+    } else {
       // since message_len > chain_len we simply wait for more data
       break;
     }
@@ -246,13 +245,13 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
     // We send the response if response.magic is set,
     if (rehead->response.magic == PROTOCOL_BINARY_RES) {
       if (replybuf) {
-        reply->AppendChain(std::move(replybuf));
+        reply->PrependChain(std::move(replybuf));
       }
       // queue data to send
       if (rbuf == nullptr) {
         rbuf = std::move(reply);
       } else {
-        rbuf->AppendChain(std::move(reply));
+        rbuf->PrependChain(std::move(reply));
       }
     }
   } // end while(buf_)
@@ -264,7 +263,7 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
     return;
   }
 
-  const auto tcp_message_len = 1480; // MTU - tcp header
+  const auto tcp_message_len = 1460; // MTU - tcp header
   auto chain_len = rbuf->ComputeChainDataLength();
 
   if (chain_len == 0) {
@@ -351,7 +350,7 @@ ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf,
   bdata.Advance(h.request.extlen);
   auto keyptr = bdata.Get(keylen);
 
-  if(keylen > 0){
+  if (keylen > 0) {
     key = std::string(reinterpret_cast<const char *>(keyptr), keylen);
   }
 
@@ -380,21 +379,24 @@ ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf,
       kv = res->Binary();
       bodylen += kv->ComputeChainDataLength();
     } else {
-      // inthe case of GETK miss, we need to reply with key
-      auto keybuf = MakeUniqueIOBuf(keylen, true);
-      auto keybufptr = keybuf->GetMutDataPointer();
       // Miss
       if (h.request.opcode == PROTOCOL_BINARY_CMD_GETQ ||
           h.request.opcode == PROTOCOL_BINARY_CMD_GETKQ) {
-        // If GETQ we send no response
+        // If GETQ/GETKQ we send no response
         rhead->response.magic = 0;
         return nullptr;
+      } else if (h.request.opcode == PROTOCOL_BINARY_CMD_GETK) {
+        // inthe case of GETK miss, we need to reply with key
+        // auto keybuf = MakeUniqueIOBuf(keylen, true);
+        // auto keybufptr = keybuf->GetMutDataPointer();
+        // std::memcpy(keybufptr.Data(), key.c_str(), keylen);
+        // bodylen += keylen;
+        // kv = std::move(keybuf);
       }
-      // return miss response + key
+      // return miss response status
+      keylen = 0;
+      rhead->response.extlen = 0;
       status = PROTOCOL_BINARY_RESPONSE_KEY_ENOENT;
-      std::memcpy(keybufptr.Data(), key.c_str(), keylen);
-      bodylen += keylen;
-      kv = std::move(keybuf);
     }
     break;
   case PROTOCOL_BINARY_CMD_NOOP:

@@ -8,6 +8,7 @@
 #include <memory>
 #include <ebbrt/CacheAligned.h>
 #include <ebbrt/Net.h>
+#include <ebbrt/RcuTable.h>
 #include <ebbrt/SpinLock.h>
 #include <ebbrt/StaticSharedEbb.h>
 #include <ebbrt/SharedIOBufRef.h>
@@ -33,21 +34,29 @@ private:
     /** GetResponse() - store only request string on default path
      */
     GetResponse(std::unique_ptr<IOBuf>);
-    /** GetResponse::Ascii() - return the ascii formatted response string.
-     * Format the string from original request if it does not exist.
-     */
-    std::unique_ptr<IOBuf> Ascii();
     /** GetResponse::Binary() - return binary formatted response string.
      * Format the string from original request if it does not exist.
      */
     std::unique_ptr<IOBuf> Binary();
+    std::unique_ptr<IOBuf> Ascii();
+
   private:
     bool binary_;
     std::unique_ptr<MutSharedIOBufRef> request_;
     std::unique_ptr<MutSharedIOBufRef> binary_response_;
     //std::unique_ptr<MutSharedIOBufRef> ascii_response_;
-  }; 
-  
+  };
+
+  class TableEntry {
+  public:
+    TableEntry(std::string key, std::unique_ptr<IOBuf> val)
+        : key(key), value(std::move(val)) {}
+    /** Rcu data */
+    ebbrt::RcuHListHook hook;
+    std::string key;
+    GetResponse value;
+  };
+
   class TcpSession : public TcpHandler {
   public:
     TcpSession(Memcached *mcd, ebbrt::NetworkManager::TcpPcb pcb)
@@ -71,7 +80,7 @@ private:
   void Quit();
   void Flush();
   NetworkManager::ListeningTcpPcb listening_pcb_;
-  std::unordered_map<std::string, GetResponse> map_;
+  RcuHashTable<TableEntry, std::string, &TableEntry::hook, &TableEntry::key> table_{8};
   //fixme: below two are binary specific.. for now
   void Nop(protocol_binary_request_header &);
   void Unimplemented(protocol_binary_request_header &);

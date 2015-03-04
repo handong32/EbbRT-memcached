@@ -71,28 +71,28 @@ std::unique_ptr<ebbrt::IOBuf> ebbrt::Memcached::GetResponse::Binary() {
 
 ebbrt::Memcached::GetResponse *ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b,
                                                      std::string key) {
-  auto query = map_.find(key);
-  if (query == map_.end()) {
+  auto p = table_.find(key);
+  if (!p) {
     // cache miss
     return nullptr;
   } else {
     // cache hit
-    return &query->second;
+    return &(p->value);
   }
 }
 
 void ebbrt::Memcached::Set(std::unique_ptr<IOBuf> b, std::string key) {
-  map_[key] = GetResponse(std::move(b));
+  table_.insert(*new TableEntry(key, std::move(b)));
   return;
 }
 
 void ebbrt::Memcached::Quit() {
-  // TODO
   return;
 }
 
 void ebbrt::Memcached::Flush() {
-  map_.clear();
+  // TODO
+  kprintf("warning: rcu flush is unimplemented");
   return;
 }
 

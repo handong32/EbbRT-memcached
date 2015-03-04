@@ -253,83 +253,32 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
       } else {
         rbuf->PrependChain(std::move(reply));
       }
+
+
+      while (rbuf->ComputeChainDataLength() > 1460) {
+        size_t remaining_length = 1460;
+        for (auto &buf : *rbuf) {
+          kassert(buf.Length() <= 1460);
+          if (buf.Length() > remaining_length) {
+            auto remainder = std::unique_ptr<MutIOBuf>(
+                static_cast<MutIOBuf *>(rbuf->UnlinkEnd(buf).release()));
+            Send(std::move(rbuf));
+            rbuf = std::move(remainder);
+            break;
+          } else {
+            remaining_length -= buf.Length();
+          }
+        }
+
+      }
     }
   } // end while(buf_)
 
-  // Response data is in rbuf
-  // Here we split a large reply message into multiple tcp sends
-  // TODO: interface to find correct MTU size (assuming 1500)
-  if (rbuf == nullptr) {
-    return;
+  if (rbuf != nullptr) {
+    kassert(rbuf->ComputeChainDataLength() <= 1460);
+    Send(std::move(rbuf));
   }
 
-  const auto tcp_message_len = 1460; // MTU - tcp header
-  auto chain_len = rbuf->ComputeChainDataLength();
-
-  if (chain_len == 0) {
-    return;
-  }
-
-  while (rbuf) {
-    std::unique_ptr<MutIOBuf> msg;
-    if (likely(chain_len <= tcp_message_len)) {
-      // We have a full message
-      msg = std::move(rbuf);
-    } else if (chain_len > tcp_message_len) {
-
-      // After this loop msg should hold exactly one message and everything
-      // else will be in rbuf
-      bool first = true;
-      msg = std::move(rbuf);
-      uint32_t available_space = tcp_message_len;
-      for (auto &buf : *msg) {
-        kassert(available_space > 0);
-        // for each buffer
-        auto buf_len = buf.Length();
-        if (buf_len == available_space) {
-          // If the first buffer contains the full message
-          // Move the remainder of chain into buf, while our message remains
-          // in msg_
-          rbuf = std::unique_ptr<MutIOBuf>(
-              static_cast<MutIOBuf *>(msg->UnlinkEnd(*buf.Next()).release()));
-          break;
-        } else if (buf_len > available_space) {
-          // Here we need to split the buffer into multiple messages
-          std::unique_ptr<MutIOBuf> end;
-          if (first) {
-            end = std::move(msg);
-          } else {
-            auto tmp_end =
-                static_cast<MutIOBuf *>(msg->UnlinkEnd(buf).release());
-            end = std::unique_ptr<MutIOBuf>(tmp_end);
-          }
-          auto remainder = end->Pop();
-          // make a reference counted IOBuf to the end
-          auto rc_end = IOBuf::Create<MutSharedIOBufRef>(
-              SharedIOBufRef::CloneView, std::move(end));
-          // create a copy (increments ref count)
-          rbuf = IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView,
-                                                  *rc_end);
-          // trim and append to msg
-          rc_end->TrimEnd(buf_len - available_space);
-          if (first) {
-            msg = std::move(rc_end);
-          } else {
-            msg->PrependChain(std::move(rc_end));
-          }
-
-          // advance to start of next message
-          rbuf->Advance(available_space);
-          if (remainder)
-            rbuf->PrependChain(std::move(remainder));
-          break;
-        }
-        available_space -= buf_len;
-        first = false;
-      } // end for(buf:msg)
-    }
-    Send(std::move(msg));
-  } // end while(rbuf)
   return;
 }
 

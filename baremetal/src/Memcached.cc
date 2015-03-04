@@ -130,6 +130,9 @@ void ebbrt::Memcached::Unimplemented(protocol_binary_request_header &h) {
 void ebbrt::Memcached::Start(uint16_t port) {
   listening_pcb_.Bind(port, [this](NetworkManager::TcpPcb pcb) {
     // new connection callback
+    static std::atomic<size_t> cpu_index{0};
+    auto index = cpu_index.fetch_add(1) % ebbrt::Cpu::Count();
+    pcb.BindCpu(index);
     auto connection = new TcpSession(this, std::move(pcb));
     connection->Install();
   });

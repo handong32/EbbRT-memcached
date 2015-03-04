@@ -151,14 +151,15 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
   // process buffer chain
   while (buf_) {
     // inspeact buffer head
-    auto bp = buf_->Data();
+    //auto bp = buf_->Data();
     auto dp = buf_->GetDataPointer();
     auto chain_len = buf_->ComputeChainDataLength();
 
     // set protocol {binary, ascii} specifics
     unsigned int head_len, body_len, message_len;
+    auto magic = dp.GetNoAdvance(1);
 
-    if (bp[0] == PROTOCOL_BINARY_REQ) {
+    if (*magic == PROTOCOL_BINARY_REQ) {
       head_len = sizeof(protocol_binary_request_header);
       // Do we have enough data for a header?
       if (chain_len < head_len) {
@@ -168,8 +169,8 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
       body_len = htonl(h.request.bodylen);
       message_len = head_len + body_len;
     } else {
-      kabort("Unknown msg header \n");
-      // fixme: should we return here???
+      kprintf("Unknown msg header. buf length:%u \n",(unsigned int)buf_->Length());
+      return;
     }
 
     // start processing requests

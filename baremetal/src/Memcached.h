@@ -39,13 +39,9 @@ private:
      * Format the string from original request if it does not exist.
      */
     std::unique_ptr<IOBuf> Binary();
-    std::unique_ptr<IOBuf> Ascii();
 
   private:
-    bool binary_;
-    std::unique_ptr<MutSharedIOBufRef> request_;
     std::unique_ptr<MutSharedIOBufRef> binary_response_;
-    //std::unique_ptr<MutSharedIOBufRef> ascii_response_;
   };
 
   class TableEntry {

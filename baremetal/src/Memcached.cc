@@ -17,45 +17,25 @@ ebbrt::Memcached::GetResponse::GetResponse() {}
 ebbrt::Memcached::GetResponse::GetResponse(std::unique_ptr<IOBuf> b) {
   auto bptr = b.get();
   auto remainder = b->Next();
-  request_ =
+  binary_response_ =
       IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView, std::move(b));
   while (remainder != bptr) {
     auto next = remainder->Next();
     auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
-    request_->PrependChain(std::move(ref));
+    binary_response_->PrependChain(std::move(ref));
     remainder = next;
   }
-  binary_response_ = nullptr;
-  binary_ = true;
-}
-
-std::unique_ptr<ebbrt::IOBuf> ebbrt::Memcached::GetResponse::Ascii() {
-  kassert(request_ != nullptr);
-  return nullptr;
+  binary_response_->AdvanceChain(sizeof(protocol_binary_request_header));
+  // clear extras of set msg
+  auto md = binary_response_->GetMutDataPointer();
+  for (size_t i = 0; i < sizeof(uint32_t); i++) {
+    md.Get<uint8_t>() = 0;
+  }
+  binary_response_->AdvanceChain(sizeof(uint32_t));
 }
 
 std::unique_ptr<ebbrt::IOBuf> ebbrt::Memcached::GetResponse::Binary() {
-  kassert(request_ != nullptr);
-  if (binary_response_ == nullptr) {
-    //  We optimise  binary response for the GETK which requires extras, key and
-    // value. Format of stored request is <extra,key,value>
-    kassert(binary_ == true); // We do not yet support mixed ASCII and BINARY
-    auto rptr = request_.get();
-    auto remainder = request_->Next();
-    binary_response_ =
-        IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView, *request_);
-    while (remainder != rptr) {
-      auto next = remainder->Next();
-      auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
-      binary_response_->PrependChain(std::move(ref));
-      remainder = next;
-    }
-    binary_response_->AdvanceChain(sizeof(protocol_binary_request_header));
-    // auto md = binary_response_->GetMutDataPointer();
-    // TODO: clear flag bits
-    // md.Get<uint32_t>() = 0;
-    binary_response_->AdvanceChain(sizeof(uint32_t));
-  }
+  kassert(binary_response_ != nullptr);
   auto brptr = binary_response_.get();
   auto remainder = binary_response_->Next();
   auto ret = IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView,

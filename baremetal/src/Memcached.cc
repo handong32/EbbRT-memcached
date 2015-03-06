@@ -92,8 +92,7 @@ void ebbrt::Memcached::Quit() {
 }
 
 void ebbrt::Memcached::Flush() {
-  // TODO
-  kprintf("warning: rcu flush is unimplemented");
+  table_.clear();
   return;
 }
 
@@ -361,6 +360,9 @@ ebbrt::Memcached::ProcessBinary(std::unique_ptr<IOBuf> buf,
     Quit();
     return nullptr;
   case PROTOCOL_BINARY_CMD_FLUSH:
+    rhead->response.magic = PROTOCOL_BINARY_RES;
+    keylen = 0;
+    rhead->response.extlen = 0;
     Flush();
     break;
   case PROTOCOL_BINARY_CMD_FLUSHQ:

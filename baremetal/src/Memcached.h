@@ -80,7 +80,7 @@ private:
   void Quit();
   void Flush();
   NetworkManager::ListeningTcpPcb listening_pcb_;
-  RcuHashTable<TableEntry, std::string, &TableEntry::hook, &TableEntry::key> table_{8};
+  RcuHashTable<TableEntry, std::string, &TableEntry::hook, &TableEntry::key> table_{13}; //8k buckets
   //fixme: below two are binary specific.. for now
   void Nop(protocol_binary_request_header &);
   void Unimplemented(protocol_binary_request_header &);

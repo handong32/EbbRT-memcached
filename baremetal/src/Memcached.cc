@@ -92,6 +92,7 @@ void ebbrt::Memcached::Quit() {
 }
 
 void ebbrt::Memcached::Flush() {
+  std::lock_guard<ebbrt::SpinLock> guard(table_lock_);
   table_.clear();
   return;
 }

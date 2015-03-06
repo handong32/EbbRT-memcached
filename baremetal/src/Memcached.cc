@@ -82,6 +82,7 @@ ebbrt::Memcached::GetResponse *ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b,
 }
 
 void ebbrt::Memcached::Set(std::unique_ptr<IOBuf> b, std::string key) {
+  std::lock_guard<ebbrt::SpinLock> guard(table_lock_);
   table_.insert(*new TableEntry(key, std::move(b)));
   return;
 }

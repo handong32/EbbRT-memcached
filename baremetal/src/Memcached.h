@@ -5,6 +5,7 @@
 #ifndef MEMCACHED_H
 #define MEMCACHED_H
 
+#include <mutex>
 #include <memory>
 #include <ebbrt/CacheAligned.h>
 #include <ebbrt/Net.h>
@@ -81,6 +82,7 @@ private:
   void Flush();
   NetworkManager::ListeningTcpPcb listening_pcb_;
   RcuHashTable<TableEntry, std::string, &TableEntry::hook, &TableEntry::key> table_{13}; //8k buckets
+  ebbrt::SpinLock table_lock_;
   //fixme: below two are binary specific.. for now
   void Nop(protocol_binary_request_header &);
   void Unimplemented(protocol_binary_request_header &);

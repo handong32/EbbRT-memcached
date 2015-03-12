@@ -9,12 +9,12 @@
 #include <memory>
 #include <ebbrt/CacheAligned.h>
 #include <ebbrt/Net.h>
+#include <ebbrt/NetTcpHandler.h>
 #include <ebbrt/RcuTable.h>
 #include <ebbrt/SpinLock.h>
 #include <ebbrt/StaticSharedEbb.h>
 #include <ebbrt/SharedIOBufRef.h>
 #include "protocol_binary.h"
-#include "tcp_handler.hpp"
 
 namespace ebbrt {
 class Memcached : public StaticSharedEbb<Memcached>, public CacheAligned {
@@ -54,10 +54,10 @@ private:
     GetResponse value;
   };
 
-  class TcpSession : public TcpHandler {
+  class TcpSession : public ebbrt::TcpHandler {
   public:
     TcpSession(Memcached *mcd, ebbrt::NetworkManager::TcpPcb pcb)
-      : TcpHandler(std::move(pcb)), mcd_(mcd) {}
+      : ebbrt::TcpHandler(std::move(pcb)), mcd_(mcd) {}
     void Close(){}
     void Abort(){}
     void Receive(std::unique_ptr<MutIOBuf> b);

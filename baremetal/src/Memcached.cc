@@ -238,29 +238,10 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
       } else {
         rbuf->PrependChain(std::move(reply));
       }
-
-
-      while (rbuf->ComputeChainDataLength() > 1460) {
-        size_t remaining_length = 1460;
-        for (auto &buf : *rbuf) {
-          kassert(buf.Length() <= 1460);
-          if (buf.Length() > remaining_length) {
-            auto remainder = std::unique_ptr<MutIOBuf>(
-                static_cast<MutIOBuf *>(rbuf->UnlinkEnd(buf).release()));
-            Send(std::move(rbuf));
-            rbuf = std::move(remainder);
-            break;
-          } else {
-            remaining_length -= buf.Length();
-          }
-        }
-
-      }
     }
   } // end while(buf_)
 
   if (rbuf != nullptr) {
-    kassert(rbuf->ComputeChainDataLength() <= 1460);
     Send(std::move(rbuf));
   }
 

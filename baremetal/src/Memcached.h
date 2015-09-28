@@ -68,7 +68,6 @@ private:
     Memcached *mcd_;
   };
 
-  
   std::unique_ptr<IOBuf> ProcessAscii(std::unique_ptr<IOBuf>, std::string);
   std::unique_ptr<IOBuf> ProcessBinary(std::unique_ptr<IOBuf>, protocol_binary_response_header*);
   static const char *com2str(uint8_t);

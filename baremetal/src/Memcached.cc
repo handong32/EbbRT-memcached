@@ -63,8 +63,17 @@ ebbrt::Memcached::GetResponse *ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b,
 
 void ebbrt::Memcached::Set(std::unique_ptr<IOBuf> b, std::string key) {
   std::lock_guard<ebbrt::SpinLock> guard(table_lock_);
+  auto p = table_.find(key);
+  // insert before erase to reduce the window where a reader might miss
   table_.insert(*new TableEntry(key, std::move(b)));
-  return;
+  if (p) {
+    // There is a small chance that a reader has passed the newly
+    // inserted value and we erase the old value before it sees
+    // it. If we wanted to prevent this, we would wait an additional
+    // RCU generation before erasing here.
+    table_.erase(*p);
+    event_manager->DoRcu([p]() { delete p; });
+  }
 }
 
 void ebbrt::Memcached::Quit() {

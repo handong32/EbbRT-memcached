@@ -15,31 +15,17 @@ ebbrt::Memcached::Memcached() {}
 ebbrt::Memcached::GetResponse::GetResponse() {}
 
 ebbrt::Memcached::GetResponse::GetResponse(std::unique_ptr<IOBuf> b) {
-  auto bptr = b.get();
-  auto remainder = b->Next();
-  binary_response_ =
-      IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView, std::move(b));
-  while (remainder != bptr) {
-    auto next = remainder->Next();
-    auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
-    binary_response_->PrependChain(std::move(ref));
-    remainder = next;
-  }
-  binary_response_->AdvanceChain(sizeof(protocol_binary_request_header));
-  // clear extras of set msg
-  auto md = binary_response_->GetMutDataPointer();
-  for (size_t i = 0; i < sizeof(uint32_t); i++) {
-    md.Get<uint8_t>() = 0;
-  }
-  binary_response_->AdvanceChain(sizeof(uint32_t));
+    binary_response_.store(CreateBinaryResponse(std::move(b)).release());
 }
 
 std::unique_ptr<ebbrt::IOBuf> ebbrt::Memcached::GetResponse::Binary() {
-  kassert(binary_response_ != nullptr);
-  auto brptr = binary_response_.get();
-  auto remainder = binary_response_->Next();
+    // We must atomically read the pointer once to ensure it is consistent
+  auto resp = binary_response_.get();
+  kassert(resp != nullptr);
+  auto brptr = resp;
+  auto remainder = resp->Next();
   auto ret = IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView,
-                                              *binary_response_);
+                                              *resp);
   while (remainder != brptr) {
     auto next = remainder->Next();
     auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
@@ -47,6 +33,33 @@ std::unique_ptr<ebbrt::IOBuf> ebbrt::Memcached::GetResponse::Binary() {
     remainder = next;
   }
   return std::move(ret);
+}
+
+std::unique_ptr<ebbrt::MutSharedIOBufRef>
+ebbrt::Memcached::GetResponse::CreateBinaryResponse(std::unique_ptr<IOBuf> b) {
+  auto bptr = b.get();
+  auto remainder = b->Next();
+  auto ret =
+      IOBuf::Create<MutSharedIOBufRef>(SharedIOBufRef::CloneView, std::move(b));
+  while (remainder != bptr) {
+    auto next = remainder->Next();
+    auto ref = IOBuf::Create<IOBufRef>(IOBufRef::CloneView, *remainder);
+    ret->PrependChain(std::move(ref));
+    remainder = next;
+  }
+  ret->AdvanceChain(sizeof(protocol_binary_request_header));
+  // clear extras of set msg
+  auto md = ret->GetMutDataPointer();
+  for (size_t i = 0; i < sizeof(uint32_t); i++) {
+    md.Get<uint8_t>() = 0;
+  }
+  ret->AdvanceChain(sizeof(uint32_t));
+  return ret;
+}
+
+std::unique_ptr<ebbrt::MutSharedIOBufRef>
+ebbrt::Memcached::GetResponse::Swap(std::unique_ptr<MutSharedIOBufRef> b) {
+  return binary_response_.exchange(b.release());
 }
 
 ebbrt::Memcached::GetResponse *ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b,
@@ -62,18 +75,24 @@ ebbrt::Memcached::GetResponse *ebbrt::Memcached::Get(std::unique_ptr<IOBuf> b,
 }
 
 void ebbrt::Memcached::Set(std::unique_ptr<IOBuf> b, std::string key) {
-  std::lock_guard<ebbrt::SpinLock> guard(table_lock_);
   auto p = table_.find(key);
-  // insert before erase to reduce the window where a reader might miss
-  table_.insert(*new TableEntry(key, std::move(b)));
-  if (p) {
-    // There is a small chance that a reader has passed the newly
-    // inserted value and we erase the old value before it sees
-    // it. If we wanted to prevent this, we would wait an additional
-    // RCU generation before erasing here.
-    table_.erase(*p);
-    event_manager->DoRcu([p]() { delete p; });
+  if (!p) {
+    // Double check that there is no matching key while holding the lock
+    std::lock_guard<ebbrt::SpinLock> guard(table_lock_);
+    p = table_.find(key);
+    if (!p) {
+      table_.insert(*new TableEntry(key, std::move(b)));
+      return;
+    }
+    // fallthrough if we found the key on the double check
   }
+  auto new_val =
+      ebbrt::Memcached::GetResponse::CreateBinaryResponse(std::move(b));
+  auto old_val = p->value.Swap(std::move(new_val));
+  // We must wait an RCU generation here because a concurrent GET
+  // may be constructing it's response.
+  event_manager->DoRcu(MoveBind([](std::unique_ptr<MutSharedIOBufRef> old) {},
+                                std::move(old_val)));
 }
 
 void ebbrt::Memcached::Quit() {

@@ -7,6 +7,7 @@
 
 #include <mutex>
 #include <memory>
+#include <ebbrt/AtomicUniquePtr.h>
 #include <ebbrt/CacheAligned.h>
 #include <ebbrt/Net.h>
 #include <ebbrt/NetTcpHandler.h>
@@ -39,15 +40,16 @@ private:
      * Format the string from original request if it does not exist.
      */
     std::unique_ptr<IOBuf> Binary();
-
+    static std::unique_ptr<MutSharedIOBufRef> CreateBinaryResponse(std::unique_ptr<IOBuf> b);
+    std::unique_ptr<MutSharedIOBufRef> Swap(std::unique_ptr<MutSharedIOBufRef> b);
   private:
-    std::unique_ptr<MutSharedIOBufRef> binary_response_;
+    ebbrt::atomic_unique_ptr<MutSharedIOBufRef> binary_response_{nullptr};
   };
 
   class TableEntry {
   public:
     TableEntry(std::string key, std::unique_ptr<IOBuf> val)
-        : key(key), value(std::move(val)) {}
+        : key(std::move(key)), value(std::move(val)) {}
     /** Rcu data */
     ebbrt::RcuHListHook hook;
     std::string key;

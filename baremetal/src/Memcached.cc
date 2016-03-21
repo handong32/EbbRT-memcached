@@ -91,8 +91,7 @@ void ebbrt::Memcached::Set(std::unique_ptr<IOBuf> b, std::string key) {
   auto old_val = p->value.Swap(std::move(new_val));
   // We must wait an RCU generation here because a concurrent GET
   // may be constructing it's response.
-  event_manager->DoRcu(MoveBind([](std::unique_ptr<MutSharedIOBufRef> old) {},
-                                std::move(old_val)));
+  event_manager->DoRcu([ old = std::move(old_val) ]() mutable {});
 }
 
 void ebbrt::Memcached::Quit() {

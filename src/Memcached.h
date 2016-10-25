@@ -5,16 +5,18 @@
 #ifndef MEMCACHED_H
 #define MEMCACHED_H
 
-#include <mutex>
 #include <memory>
+#include <mutex>
+
 #include <ebbrt/AtomicUniquePtr.h>
 #include <ebbrt/CacheAligned.h>
-#include <ebbrt/Net.h>
-#include <ebbrt/NetTcpHandler.h>
-#include <ebbrt/RcuTable.h>
+#include <ebbrt/SharedIOBufRef.h>
 #include <ebbrt/SpinLock.h>
 #include <ebbrt/StaticSharedEbb.h>
-#include <ebbrt/SharedIOBufRef.h>
+#include <ebbrt/native/Net.h>
+#include <ebbrt/native/NetTcpHandler.h>
+#include <ebbrt/native/RcuTable.h>
+
 #include "protocol_binary.h"
 
 namespace ebbrt {
@@ -40,8 +42,11 @@ private:
      * Format the string from original request if it does not exist.
      */
     std::unique_ptr<IOBuf> Binary();
-    static std::unique_ptr<MutSharedIOBufRef> CreateBinaryResponse(std::unique_ptr<IOBuf> b);
-    std::unique_ptr<MutSharedIOBufRef> Swap(std::unique_ptr<MutSharedIOBufRef> b);
+    static std::unique_ptr<MutSharedIOBufRef>
+    CreateBinaryResponse(std::unique_ptr<IOBuf> b);
+    std::unique_ptr<MutSharedIOBufRef>
+    Swap(std::unique_ptr<MutSharedIOBufRef> b);
+
   private:
     ebbrt::atomic_unique_ptr<MutSharedIOBufRef> binary_response_{nullptr};
   };
@@ -59,9 +64,9 @@ private:
   class TcpSession : public ebbrt::TcpHandler {
   public:
     TcpSession(Memcached *mcd, ebbrt::NetworkManager::TcpPcb pcb)
-      : ebbrt::TcpHandler(std::move(pcb)), mcd_(mcd) {}
-    void Close(){}
-    void Abort(){}
+        : ebbrt::TcpHandler(std::move(pcb)), mcd_(mcd) {}
+    void Close() {}
+    void Abort() {}
     void Receive(std::unique_ptr<MutIOBuf> b);
 
   private:
@@ -71,19 +76,21 @@ private:
   };
 
   std::unique_ptr<IOBuf> ProcessAscii(std::unique_ptr<IOBuf>, std::string);
-  std::unique_ptr<IOBuf> ProcessBinary(std::unique_ptr<IOBuf>, protocol_binary_response_header*);
+  std::unique_ptr<IOBuf> ProcessBinary(std::unique_ptr<IOBuf>,
+                                       protocol_binary_response_header *);
   static const char *com2str(uint8_t);
-  GetResponse* Get(std::unique_ptr<IOBuf>, std::string);
+  GetResponse *Get(std::unique_ptr<IOBuf>, std::string);
   void Set(std::unique_ptr<IOBuf>, std::string);
   void Quit();
   void Flush();
   NetworkManager::ListeningTcpPcb listening_pcb_;
-  RcuHashTable<TableEntry, std::string, &TableEntry::hook, &TableEntry::key> table_{13}; //8k buckets
+  RcuHashTable<TableEntry, std::string, &TableEntry::hook, &TableEntry::key>
+      table_{13}; // 8k buckets
   ebbrt::SpinLock table_lock_;
-  //fixme: below two are binary specific.. for now
+  // fixme: below two are binary specific.. for now
   void Nop(protocol_binary_request_header &);
   void Unimplemented(protocol_binary_request_header &);
 };
-} //namespace ebbrt
+} // namespace ebbrt
 
 #endif // MEMCACHED_H

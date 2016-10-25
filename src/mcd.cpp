@@ -1,7 +1,6 @@
 #include <ebbrt/Debug.h>
 #include <ebbrt/EbbAllocator.h>
-#include <ebbrt/Net.h>
-#include <ebbrt/Trace.h>
+#include <ebbrt/native/Net.h>
 #include "Memcached.h"
 
 #define MCDPORT 11211

@@ -1,10 +1,9 @@
+project("memcached-ebbrt" CXX)
 cmake_minimum_required(VERSION 2.6 FATAL_ERROR)
 set(CMAKE_CXX_FLAGS_DEBUG          "-O0 -g3")
 set(CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE        "-O4 -flto -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g3")
-
-project("memcached-ebbrt" CXX)
 
 set(BAREMETAL_SOURCES 
   src/Memcached.cc 

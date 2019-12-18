@@ -258,8 +258,7 @@ void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
     if (rehead->response.magic == PROTOCOL_BINARY_RES) {
       if (replybuf) {
         reply->PrependChain(std::move(replybuf));
-      }
-      // queue data to send
+      }      // queue data to send
       if (rbuf == nullptr) {
         rbuf = std::move(reply);
       } else {

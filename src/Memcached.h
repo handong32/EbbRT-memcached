@@ -16,6 +16,8 @@
 #include <ebbrt/native/Net.h>
 #include <ebbrt/native/NetTcpHandler.h>
 #include <ebbrt/native/RcuTable.h>
+#include <ebbrt/native/Trace.h>
+#include <ebbrt/native/IxgbeDriver.h>
 
 #include "protocol_binary.h"
 
@@ -65,7 +67,14 @@ private:
   public:
     TcpSession(Memcached *mcd, ebbrt::NetworkManager::TcpPcb pcb)
         : ebbrt::TcpHandler(std::move(pcb)), mcd_(mcd) {}
-    void Close() {}
+    void Close() {
+      uint32_t mycore = static_cast<uint32_t>(ebbrt::Cpu::GetMine());      
+      uint64_t now = ebbrt::trace::rdtsc();
+      if(ixgbe_stats[mycore].rdtsc_end == 0) {
+	ixgbe_stats[mycore].rdtsc_end = now;
+      }
+      //ebbrt::kprintf_force("Close %u %llu\n", mycore, now);
+    }
     void Abort() {}
     void Receive(std::unique_ptr<MutIOBuf> b);
 

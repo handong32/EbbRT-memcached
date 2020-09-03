@@ -141,13 +141,19 @@ void ebbrt::Memcached::Start(uint16_t port) {
     static std::atomic<size_t> cpu_index{0};
     auto index = cpu_index.fetch_add(1) % ebbrt::Cpu::Count();
     pcb.BindCpu(index);
+    uint32_t mycore = static_cast<uint32_t>(ebbrt::Cpu::GetMine());      
+    uint64_t now = ebbrt::trace::rdtsc();
+    if(now > ixgbe_stats[mycore].rdtsc_start) {
+      ixgbe_stats[mycore].rdtsc_start = now;
+    }
+    
     auto connection = new TcpSession(this, std::move(pcb));
     connection->Install();
+    //ebbrt::kprintf_force("Start %u %llu\n", mycore, now);
   });
 }
 
 void ebbrt::Memcached::TcpSession::Receive(std::unique_ptr<MutIOBuf> b) {
-
   kassert(b->Length() != 0);
   // restore any queued buffers
   if (buf_) {
